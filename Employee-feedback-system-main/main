@@ -50,7 +50,7 @@ def get_iam_token():
 
 
 # Путь к базе данных SQLite
-DB_PATH = "sqlite:///my_survey_bot.db"
+DB_PATH = "sqlite:///employee_bot.db"
 
 
 ################################################################################
