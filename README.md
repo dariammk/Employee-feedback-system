@@ -50,3 +50,49 @@ Employee-feedback-system/
 ├── requirements.txt      # Зависимости проекта
 ├── README.md             # Описание проекта
 └── .gitignore
+
+# База данных
+
+В проекте используется SQLite.
+
+Создаются следующие таблицы:
+
+## ideas
+
+Таблица для хранения идей сотрудников.
+
+### Поля:
+- `id` — уникальный идентификатор идеи
+- `text_idea` — текст идеи
+- `chat_id` — Telegram ID пользователя
+- `user_name` — username пользователя
+- `created_at` — дата создания идеи
+- `status` — статус идеи
+- `moderator_comment` — комментарий администратора
+
+---
+
+## admin_user
+
+Таблица для хранения администраторов.
+
+### Поля:
+- `id` — идентификатор администратора
+- `user_name` — имя администратора
+- `user_chat_id` — Telegram chat_id администратора
+
+---
+
+# Установка проекта
+
+1. Клонирование репозитория
+```bash
+git clone https://github.com/dariammk/Employee-feedback-system.git
+
+2. Переход в папку проекта
+```bash
+cd Employee-feedback-system
+
+3. Установка зависимостей
+```bash
+pip install -r requirements.txt
