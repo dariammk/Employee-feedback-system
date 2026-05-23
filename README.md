@@ -40,7 +40,6 @@ Telegram-бот для сбора, хранения и модерации иде
 
 ---
 
-
 # База данных
 
 В проекте используется SQLite.
@@ -72,16 +71,30 @@ Telegram-бот для сбора, хранения и модерации иде
 - `user_chat_id` — Telegram chat_id администратора
 
 ---
+# Структура проекта
+
+```text
+Employee-feedback-system/
+│
+├── main.py               # Основной файл бота
+├── employee_bot.db       # База данных SQLite
+├── requirements.txt      # Зависимости проекта
+├── README.md             # Описание проекта
+└── .gitignore
+```
+---
 
 # Установка проекта
 
 1. Клонирование репозитория
 ```bash
 git clone https://github.com/dariammk/Employee-feedback-system.git
+```
 
 2. Переход в папку проекта
 ```bash
 cd Employee-feedback-system
+```
 
 3. Установка зависимостей
 ```bash
