@@ -1,0 +1,435 @@
+import datetime
+import os
+
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    PicklePersistence,
+    ContextTypes,
+    filters
+)
+
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Text
+)
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+################################################################################
+# 1. НАСТРОЙКИ
+################################################################################
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+DB_PATH = "sqlite:///employee_bot.db"
+
+################################################################################
+# 2. МОДЕЛИ БАЗЫ ДАННЫХ
+################################################################################
+
+Base = declarative_base()
+
+
+class Ideas(Base):
+    __tablename__ = "ideas"
+
+    id = Column(Integer, primary_key=True)
+    text_idea = Column(Text, nullable=False)
+    chat_id = Column(Integer, nullable=False)
+    user_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    status = Column(String, default='На модерации')
+    moderator_comment = Column(Text, nullable=True)
+
+
+class AnalysisLog(Base):
+    __tablename__ = "analysis_logs"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    analysis_result = Column(Text, nullable=True)
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_user"
+
+    id = Column(Integer, primary_key=True)
+    user_name = Column(String, nullable=True)
+    user_chat_id = Column(Integer, nullable=True)
+
+
+engine = create_engine(DB_PATH, echo=False)
+Base.metadata.create_all(engine)
+
+SessionLocal = sessionmaker(bind=engine)
+
+YOUR_CHAT_ID = 860913232
+
+session = SessionLocal()
+
+admin_exists = session.query(AdminUser).filter(
+    AdminUser.user_chat_id == YOUR_CHAT_ID
+).first()
+
+if not admin_exists:
+    admin = AdminUser(
+        user_name="Дарья",
+        user_chat_id=YOUR_CHAT_ID
+    )
+
+    session.add(admin)
+    session.commit()
+
+session.close()
+
+SessionLocal = sessionmaker(bind=engine)
+
+################################################################################
+# 3. СОСТОЯНИЯ (ИИ УДАЛЁН → уменьшаем range)
+################################################################################
+
+(
+    MAIN_MENU,
+    SUBMIT_IDEA_TEXT,
+    SUBMIT_IDEA_CONFIRMATION,
+    MY_IDEAS_LIST,
+    IDEA_DETAILS,
+    IDEA_DETAILS_SELECT,
+    MODERATION_PANEL,
+    ADD_AN_MODERATION,
+    MODERATION_LIST,
+    MODERATION_DECISION,
+    MODERATION_COMMENT,
+    DELETE_IDEA,
+) = range(12)
+
+################################################################################
+# 4. МЕНЮ
+################################################################################
+
+def main_menu_markup(chat_id):
+
+    if check_chat_id(chat_id):
+        keyboard = [
+            ["Предложить идею"],
+            ["Мои идеи"],
+            ["Статус идеи"],
+            ["Admin"]
+        ]
+    else:
+        keyboard = [
+            ["Предложить идею"],
+            ["Мои идеи"],
+            ["Статус идеи"],
+            ["Удалить идею"]
+        ]
+
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def admin_menu_markup():
+    keyboard = [
+        ["Список идей"],
+        ["Главное меню"],
+        ["Добавить admin"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+################################################################################
+# 5. ADMIN CHECK
+################################################################################
+
+def check_chat_id(chat_id):
+    session = SessionLocal()
+    admins = session.query(AdminUser).all()
+    session.close()
+
+    return chat_id in [a.user_chat_id for a in admins]
+
+################################################################################
+# 6. START
+################################################################################
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        "Привет! Выберите действие:",
+        reply_markup=main_menu_markup(update.message.chat.id)
+    )
+    return MAIN_MENU
+
+################################################################################
+# 7. MAIN MENU HANDLER
+################################################################################
+
+async def handle_role_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = update.message.text.strip()
+
+    if text == "Предложить идею":
+        await update.message.reply_text("Введите вашу идею:")
+        return SUBMIT_IDEA_TEXT
+
+    elif text == "Мои идеи":
+        return await list_of_my_ideas(update, context)
+
+    elif text == "Admin":
+        await update.message.reply_text(
+            "Добро пожаловать в Admin-панель!",
+            reply_markup=admin_menu_markup()
+        )
+        return MODERATION_PANEL
+
+    elif text == "Статус идеи":
+        return await show_idea_choices(update, context)
+
+    elif text == "Удалить идею":
+        return await show_delete_ideas(update, context)
+
+    else:
+        await update.message.reply_text("Неизвестная команда.")
+        return MAIN_MENU
+
+################################################################################
+# 8. ИДЕИ
+################################################################################
+
+async def receive_new_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["pending_idea"] = update.message.text
+
+    await update.message.reply_text(
+        f"Вы ввели:\n{update.message.text}\nПодтвердить?",
+        reply_markup=ReplyKeyboardMarkup([["Да", "Нет"]], resize_keyboard=True)
+    )
+    return SUBMIT_IDEA_CONFIRMATION
+
+
+async def confirm_idea_submission(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = update.message.text.lower()
+
+    if text == "да":
+        session = SessionLocal()
+
+        idea = Ideas(
+            text_idea=context.user_data["pending_idea"],
+            chat_id=update.message.chat.id,
+            user_name=update.message.chat.username
+        )
+
+        session.add(idea)
+        session.commit()
+        session.close()
+
+        await update.message.reply_text("Идея сохранена!", reply_markup=main_menu_markup(update.message.chat.id))
+        return MAIN_MENU
+
+    elif text == "нет":
+        await update.message.reply_text("Введите заново:")
+        return SUBMIT_IDEA_TEXT
+
+    return SUBMIT_IDEA_CONFIRMATION
+
+################################################################################
+# 9. СПИСОК ИДЕЙ
+################################################################################
+
+async def list_of_my_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = SessionLocal()
+    chat_id = update.message.chat.id
+
+    ideas = session.query(Ideas).filter(Ideas.chat_id == chat_id).all()
+    session.close()
+
+    if not ideas:
+        await update.message.reply_text("У вас нет идей.")
+        return MAIN_MENU
+
+    msg = "\n".join([i.text_idea for i in ideas])
+    await update.message.reply_text(msg)
+
+    return MAIN_MENU
+
+################################################################################
+# 10. СТАТУС ИДЕИ
+################################################################################
+
+async def idea_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    idea_id = update.message.text.split(":")[0]
+
+    session = SessionLocal()
+    idea = session.query(Ideas).filter(Ideas.id == idea_id).first()
+    session.close()
+
+    if not idea:
+        await update.message.reply_text("Не найдено")
+        return MAIN_MENU
+
+    await update.message.reply_text(
+        f"{idea.text_idea}\nСтатус: {idea.status}"
+    )
+
+    return MAIN_MENU
+
+async def show_idea_choices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = SessionLocal()
+    chat_id = update.message.chat.id
+
+    user_ideas = session.query(Ideas).filter(Ideas.chat_id == chat_id).all()
+    session.close()
+
+    if not user_ideas:
+        await update.message.reply_text("У вас пока нет идей.")
+        return MAIN_MENU
+
+    keyboard = [[f"{idea.id}: {idea.text_idea[:30]}"] for idea in user_ideas]
+
+    await update.message.reply_text(
+        "Выберите идею:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+    return IDEA_DETAILS_SELECT
+
+################################################################################
+# 11. УДАЛЕНИЕ ИДЕИ
+################################################################################
+
+
+async def show_delete_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = SessionLocal()
+
+    chat_id = update.message.chat.id
+
+    ideas = session.query(Ideas).filter(Ideas.chat_id == chat_id).all()
+
+    session.close()
+
+    if not ideas:
+        await update.message.reply_text("У вас нет идей для удаления.")
+        return MAIN_MENU
+
+    keyboard = [[f"{idea.id} — {idea.text_idea[:30]}"] for idea in ideas]
+
+    await update.message.reply_text(
+        "Введите ID идеи для удаления:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+    return DELETE_IDEA
+
+
+async def delete_idea(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = SessionLocal()
+
+    try:
+        idea_id = int(update.message.text.split(" — ")[0])
+
+        idea = session.query(Ideas).filter(
+            Ideas.id == idea_id,
+            Ideas.chat_id == update.message.chat.id
+        ).first()
+
+        if not idea:
+            await update.message.reply_text("Идея не найдена.")
+            session.close()
+            return MAIN_MENU
+
+        session.delete(idea)
+        session.commit()
+
+        await update.message.reply_text(
+            "Идея успешно удалена!",
+            reply_markup=main_menu_markup(update.message.chat.id)
+        )
+
+    except ValueError:
+        await update.message.reply_text("Введите корректный ID.")
+
+    finally:
+        session.close()
+
+    return MAIN_MENU
+
+################################################################################
+# 12. ADMIN
+################################################################################
+
+async def moderation_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "Список идей":
+        session = SessionLocal()
+        ideas = session.query(Ideas).all()
+        session.close()
+
+        msg = "\n".join([f"{i.id}. {i.text_idea}" for i in ideas])
+        await update.message.reply_text(msg or "Пусто")
+
+    elif text == "Главное меню":
+        await update.message.reply_text("Меню", reply_markup=main_menu_markup(update.message.chat.id))
+        return MAIN_MENU
+
+    elif text == "Добавить admin":
+        await update.message.reply_text("Введите chat_id:")
+        return ADD_AN_MODERATION
+
+    return MODERATION_PANEL
+
+
+async def add_moderation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = SessionLocal()
+
+    admin = AdminUser(
+        user_chat_id=int(update.message.text),
+        user_name="admin"
+    )
+
+    session.add(admin)
+    session.commit()
+    session.close()
+
+    await update.message.reply_text("Admin добавлен")
+    return MODERATION_PANEL
+
+################################################################################
+# 13. MAIN
+################################################################################
+
+def main():
+    persistence = PicklePersistence(filepath="bot_data.pkl")
+
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).persistence(persistence).build()
+
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", start_command)],
+        states={
+            MAIN_MENU: [MessageHandler(filters.TEXT, handle_role_choice)],
+
+            SUBMIT_IDEA_TEXT: [MessageHandler(filters.TEXT, receive_new_ideas)],
+            SUBMIT_IDEA_CONFIRMATION: [MessageHandler(filters.TEXT, confirm_idea_submission)],
+
+            MY_IDEAS_LIST: [MessageHandler(filters.TEXT, list_of_my_ideas)],
+            IDEA_DETAILS_SELECT: [MessageHandler(filters.TEXT, idea_details)],
+
+            MODERATION_PANEL: [MessageHandler(filters.TEXT, moderation_panel)],
+            ADD_AN_MODERATION: [MessageHandler(filters.TEXT, add_moderation)],
+            DELETE_IDEA: [MessageHandler(filters.TEXT, delete_idea)],
+        },
+        fallbacks=[CommandHandler("start", start_command)],
+        allow_reentry=True,
+    )
+
+    app.add_handler(conv)
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
