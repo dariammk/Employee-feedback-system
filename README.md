@@ -40,16 +40,6 @@ Telegram-бот для сбора, хранения и модерации иде
 
 ---
 
-# Структура проекта
-
-```text
-Employee-feedback-system/
-│
-├── main.py               # Основной файл бота
-├── employee_bot.db       # База данных SQLite
-├── requirements.txt      # Зависимости проекта
-├── README.md             # Описание проекта
-└── .gitignore
 
 # База данных
 
